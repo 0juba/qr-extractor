@@ -3,40 +3,45 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 )
 
-func welcomeHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("HTTP %s %s%s from %s\n", r.Method, r.Host, r.URL, r.RemoteAddr)
+func welcomeHandler(resp http.ResponseWriter, req *http.Request) {
+	log.Printf("HTTP %s %s%s from %s\n", req.Method, req.Host, req.URL, req.RemoteAddr)
 
-	if r.URL.Path != "/" {
-		http.Error(w, "Not Found", http.StatusNotFound)
+	if req.URL.Path != "/" {
+		http.Error(resp, "Not Found", http.StatusNotFound)
 
 		return
 	}
 
-	w.Header().Set(`Content-Type`, `application/json`)
+	resp.Header().Set(`Content-Type`, `application/json`)
 
-	err := json.NewEncoder(w).Encode(map[string]string{
+	err := json.NewEncoder(resp).Encode(map[string]string{
 		`app`: `qr-code-extractor`,
 		`v`:   `1.0`,
 	})
 	if err != nil {
-		log.Printf(`HTTP error occurred for remote addr %s\n`, r.RemoteAddr)
+		log.Printf(`HTTP error occurred for remote addr %s\n`, req.RemoteAddr)
 
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error": "internal server error"}`))
+		resp.WriteHeader(http.StatusInternalServerError)
+		_, _ = resp.Write([]byte(`{"error": "internal server error"}`))
 	} else {
-		w.WriteHeader(http.StatusOK)
+		resp.WriteHeader(http.StatusOK)
 	}
 }
 
 func main() {
+	const readHeaderTimeout = 5
+
 	httpSrv := http.Server{
-		Addr: `:8080`,
+		Addr:              `:8080`,
+		ReadHeaderTimeout: readHeaderTimeout * time.Second,
 	}
 
 	idleConnectionsClosed := make(chan struct{})
@@ -54,11 +59,12 @@ func main() {
 
 	http.HandleFunc("/", welcomeHandler)
 	log.Printf("Starting qr-code-extractor server on addr: %s", httpSrv.Addr)
-	if err := httpSrv.ListenAndServe(); err != http.ErrServerClosed {
+
+	if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 
 	<-idleConnectionsClosed
 
-	log.Printf(`qr-code-extractor finished job, bye bye`)
+	log.Printf(`qr-code-extractor finished job, bye`)
 }
