@@ -6,40 +6,37 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-
-	"github.com/jackc/pgx/v5"
+	"sync"
+	"syscall"
+	"time"
 )
 
-func withHTTPSrv(srv *http.Server) func(ctx context.Context) {
-	return func(ctx context.Context) {
-		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("HTTP Server Shutdown Error: %v", err)
-		}
-	}
-}
+func gracefulShutdown(ctx context.Context, cancelFunc context.CancelFunc, httpSrv *http.Server,
+	serverWorkers *sync.WaitGroup,
+) {
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
+	<-sigint
 
-func withDBConn(dbConn *pgx.Conn) func(ctx context.Context) {
-	return func(ctx context.Context) {
-		err := dbConn.Close(ctx)
-		if err != nil {
-			log.Println(err)
-		}
-	}
-}
+	cancelFunc()
 
-func gracefulShutdown(ctx context.Context, opts ...func(ctx context.Context)) chan struct{} {
-	idleConnectionsClosed := make(chan struct{})
+	const gracefulShutdownReleaseTimeout = 10
+
+	shutdownCtx, shutdownRelease := context.WithTimeout(ctx, time.Second*gracefulShutdownReleaseTimeout)
+	defer shutdownRelease()
+
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		log.Panicf(`http shutdown err %s`, err)
+	}
+
+	waitor := make(chan bool)
 	go func() {
-		sigint := make(chan os.Signal, 1)
-		signal.Notify(sigint, os.Interrupt)
-		<-sigint
-
-		for _, o := range opts {
-			o(ctx)
-		}
-
-		close(idleConnectionsClosed)
+		serverWorkers.Wait()
+		waitor <- true
 	}()
 
-	return idleConnectionsClosed
+	select {
+	case <-shutdownCtx.Done():
+	case <-waitor:
+	}
 }
