@@ -5,31 +5,37 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
 func main() {
 	const readHeaderTimeout = 5
 
-	ctx := context.Background()
+	ctx, cancelFunc := context.WithCancel(context.Background())
 
-	httpSrv := http.Server{
+	httpSrv := &http.Server{
 		Addr:              `:8080`,
 		ReadHeaderTimeout: readHeaderTimeout * time.Second,
 	}
 
-	dbConn := mustInitDBConnection(ctx)
+	cfg := loadDBEnv(ctx, locateDefaultEnvFile())
 
-	idleConnectionsClosed := gracefulShutdown(ctx, withDBConn(dbConn), withHTTPSrv(&httpSrv))
+	serverWorkers := &sync.WaitGroup{}
+
+	_ = mustInitDBConnection(ctx, cfg, serverWorkers)
+	_ = initMemcachedConn(ctx, cfg, serverWorkers)
 
 	http.HandleFunc("/", welcomeHandler)
 	log.Printf("Starting qr-code-extractor server on addr: %s", httpSrv.Addr)
 
-	if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
-	}
+	go func() {
+		if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
 
-	<-idleConnectionsClosed
+	gracefulShutdown(ctx, cancelFunc, httpSrv, serverWorkers)
 
 	log.Printf(`qr-code-extractor finished job, bye`)
 }

@@ -19,6 +19,9 @@ run-service:
 run-application:
 	docker-compose --context=lima-docker up
 
+run-memcached:
+	$(DOCKER) run -it --rm --name devhands_memcached -p 11211:11211 memcached:latest
+
 # https://github.com/docker-library/docs/blob/master/postgres/README.md
 # How to configure permissions for PG data directory
 run-pgsql:
