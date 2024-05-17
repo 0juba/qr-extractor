@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-func main() {
-	const readHeaderTimeout = 5
+const readHeaderTimeout = 5
 
+func main() {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	httpSrv := &http.Server{
@@ -25,8 +25,11 @@ func main() {
 
 	_ = mustInitDBConnection(ctx, cfg, serverWorkers)
 	_ = initMemcachedConn(ctx, cfg, serverWorkers)
+	upPrometheusExporter(ctx, serverWorkers)
 
-	http.HandleFunc("/", welcomeHandler)
+	serverMetrics := registerPrometheusMetrics()
+
+	http.HandleFunc("/", createWelcomeHandler(serverMetrics))
 	log.Printf("Starting qr-code-extractor server on addr: %s", httpSrv.Addr)
 
 	go func() {
