@@ -27,7 +27,9 @@ func main() {
 	_ = initMemcachedConn(ctx, cfg, serverWorkers)
 	upPrometheusExporter(ctx, serverWorkers)
 
-	http.HandleFunc("/", welcomeHandler)
+	serverMetrics := registerPrometheusMetrics()
+
+	http.HandleFunc("/", createWelcomeHandler(serverMetrics))
 	log.Printf("Starting qr-code-extractor server on addr: %s", httpSrv.Addr)
 
 	go func() {

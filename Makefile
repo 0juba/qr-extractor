@@ -4,6 +4,9 @@ DOCKER=docker --context=lima-docker
 
 .PHONY: build-app run-lima run-service run-application run-pgsql fix-permissions-pgsql stop-pgsql
 
+remove-vendor-from-git:
+	git rm -rf --cached vendor
+
 ci-local:
 	golangci-lint run
 
