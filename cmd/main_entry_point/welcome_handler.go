@@ -128,7 +128,7 @@ func onCacheWrite(memcachedClient *memcache.Client) {
 		Value: []byte(rawV),
 	})
 	if err != nil {
-		log.Printf("cannot write cache: %w", err)
+		log.Printf("cannot write cache: %s", err)
 	} else {
 		log.Printf("write cache successfully")
 	}
@@ -138,7 +138,7 @@ func onCacheRead(memcachedClient *memcache.Client) {
 	v := rand.ExpFloat64()
 	item, err := memcachedClient.Get(fmt.Sprintf("random-key-%f", v))
 	if err != nil {
-		log.Printf("cannot read from cache: %w", err)
+		log.Printf("cannot read from cache: %s", err)
 	} else {
 		log.Printf("read from cache: %v", item)
 	}
@@ -167,13 +167,13 @@ func onDPCpuBound(pgConn *pgx.Conn) {
 			"md5(random()::text), sha512(random()::text::bytea), "+
 			"md5(random()::text), sha512(random()::text::bytea)")
 	if err != nil {
-		log.Printf("read from db err: %w", err)
+		log.Printf("read from db err: %s", err)
 	}
 
 	defer r.Close()
 
 	if r.Err() != nil {
-		log.Printf("db internal err: %w", r.Err())
+		log.Printf("db internal err: %s", r.Err())
 	} else {
 		log.Printf("got query result")
 	}
