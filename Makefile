@@ -59,3 +59,9 @@ rebuild-app:
 
 rebuild: rm-local-env rebuild-app start-local-env
 	@$(info rebuild app)
+
+install-tools:
+	GOBIN="$$(pwd)/.bin" go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1
+
+lint: install-tools
+	./.bin/golangci-lint run

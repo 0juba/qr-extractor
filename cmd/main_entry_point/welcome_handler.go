@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha512"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -25,6 +25,8 @@ func createWelcomeHandler(
 	return func(resp http.ResponseWriter, req *http.Request) {
 		var finalHTTPCode int
 
+		ctx := req.Context()
+
 		if serverMetrics != nil {
 			timer := prometheus.NewTimer(*serverMetrics.ts)
 			defer func() {
@@ -42,78 +44,96 @@ func createWelcomeHandler(
 			return
 		}
 
-		wg := &sync.WaitGroup{}
+		waitor := &sync.WaitGroup{}
+		handleQueryParams(ctx, waitor, req, memcacheClient, pgConn)
 
-		switch {
-		case req.URL.Query().Has("cpu-bound"):
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		waitor.Add(1)
 
-				v, err := strconv.ParseInt(req.URL.Query().Get("cpu-bound"), 10, 64)
-				if err == nil {
-					onCpuBound(v)
-				}
-			}()
-		case req.URL.Query().Has("cache-w"):
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				onCacheWrite(memcacheClient)
-			}()
-		case req.URL.Query().Has("cache-r"):
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				onCacheRead(memcacheClient)
-			}()
-		case req.URL.Query().Has("db-r"):
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				onDPCpuBound(pgConn)
-			}()
-		}
-
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer waitor.Done()
 
-			resp.Header().Set(`Content-Type`, `application/json`)
-
-			rawBody, err := json.Marshal(map[string]string{
-				`app`: `qr-code-extractor`,
-				`v`:   `1.0`,
-			})
-			if err != nil {
-				log.Printf(`HTTP error occurred for remote addr %s\n`, req.RemoteAddr)
-
-				resp.WriteHeader(http.StatusInternalServerError)
-				finalHTTPCode = http.StatusInternalServerError
-
-				_, _ = resp.Write([]byte(`{"error": "internal server error"}`))
-			} else {
-				resp.WriteHeader(http.StatusOK)
-				finalHTTPCode = http.StatusOK
-
-				_, err := resp.Write(rawBody)
-				if err != nil {
-					resp.WriteHeader(http.StatusInternalServerError)
-					finalHTTPCode = http.StatusInternalServerError
-
-					_, _ = resp.Write([]byte(`{"error": "internal server error"}`))
-				}
-			}
+			finalHTTPCode = handleMainReq(resp, req)
 		}()
 
-		wg.Wait()
+		waitor.Wait()
 	}
 }
 
-func onCpuBound(count int64) {
+func handleQueryParams(ctx context.Context, waitor *sync.WaitGroup, req *http.Request, memcacheClient *memcache.Client,
+	pgConn *pgx.Conn,
+) {
+	switch {
+	case req.URL.Query().Has("cpu-bound"):
+		waitor.Add(1)
+
+		go func() {
+			defer waitor.Done()
+
+			v, err := strconv.ParseInt(req.URL.Query().Get("cpu-bound"), 10, 64)
+			if err == nil {
+				onCPUBound(int(v))
+			}
+		}()
+	case req.URL.Query().Has("cache-w"):
+		waitor.Add(1)
+
+		go func() {
+			defer waitor.Done()
+			onCacheWrite(memcacheClient)
+		}()
+	case req.URL.Query().Has("cache-r"):
+		waitor.Add(1)
+
+		go func() {
+			defer waitor.Done()
+			onCacheRead(memcacheClient)
+		}()
+	case req.URL.Query().Has("db-r"):
+		waitor.Add(1)
+
+		go func() {
+			defer waitor.Done()
+			onDPCPUBound(ctx, pgConn)
+		}()
+	}
+}
+
+func handleMainReq(resp http.ResponseWriter, req *http.Request) int {
+	var finalHTTPCode int
+
+	resp.Header().Set(`Content-Type`, `application/json`)
+
+	rawBody, err := json.Marshal(map[string]string{
+		`app`: `qr-code-extractor`,
+		`v`:   `1.0`,
+	})
+	if err != nil {
+		log.Printf(`HTTP error occurred for remote addr %s\n`, req.RemoteAddr)
+
+		resp.WriteHeader(http.StatusInternalServerError)
+		finalHTTPCode = http.StatusInternalServerError
+
+		_, _ = resp.Write([]byte(`{"error": "internal server error"}`))
+	} else {
+		resp.WriteHeader(http.StatusOK)
+		finalHTTPCode = http.StatusOK
+
+		_, err := resp.Write(rawBody)
+		if err != nil {
+			resp.WriteHeader(http.StatusInternalServerError)
+			finalHTTPCode = http.StatusInternalServerError
+
+			_, _ = resp.Write([]byte(`{"error": "internal server error"}`))
+		}
+	}
+
+	return finalHTTPCode
+}
+
+func onCPUBound(count int) {
 	v := rand.ExpFloat64()
-	for i := int64(0); i < count; i++ {
-		md5.Sum([]byte(fmt.Sprintf("%f", v)))
+	for range count {
+		sha512.Sum512_256([]byte(fmt.Sprintf("%f", v)))
 	}
 
 	log.Printf("cpu bound req")
@@ -137,6 +157,7 @@ func onCacheWrite(memcachedClient *memcache.Client) {
 func onCacheRead(memcachedClient *memcache.Client) {
 	v := rand.ExpFloat64()
 	item, err := memcachedClient.Get(fmt.Sprintf("random-key-%f", v))
+
 	if err != nil {
 		log.Printf("cannot read from cache: %s", err)
 	} else {
@@ -144,8 +165,8 @@ func onCacheRead(memcachedClient *memcache.Client) {
 	}
 }
 
-func onDPCpuBound(pgConn *pgx.Conn) {
-	r, err := pgConn.Query(context.Background(),
+func onDPCPUBound(ctx context.Context, pgConn *pgx.Conn) {
+	resultSet, err := pgConn.Query(ctx,
 		"SELECT md5(random()::text), sha512(random()::text::bytea), "+
 			"md5(random()::text), sha512(random()::text::bytea), "+
 			"md5(random()::text), sha512(random()::text::bytea), "+
@@ -170,10 +191,10 @@ func onDPCpuBound(pgConn *pgx.Conn) {
 		log.Printf("read from db err: %s", err)
 	}
 
-	defer r.Close()
+	defer resultSet.Close()
 
-	if r.Err() != nil {
-		log.Printf("db internal err: %s", r.Err())
+	if resultSet.Err() != nil {
+		log.Printf("db internal err: %s", resultSet.Err())
 	} else {
 		log.Printf("got query result")
 	}
