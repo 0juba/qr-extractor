@@ -1,15 +1,27 @@
 package main
 
 import (
+	"context"
+	"crypto/md5"
 	"encoding/json"
+	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"strconv"
+	"sync"
 
+	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func createWelcomeHandler(serverMetrics *metrics) func(resp http.ResponseWriter, req *http.Request) {
+func createWelcomeHandler(
+	serverMetrics *metrics,
+	memcacheClient *memcache.Client,
+	pgConn *pgx.Conn,
+) func(
+	resp http.ResponseWriter, req *http.Request) {
 	return func(resp http.ResponseWriter, req *http.Request) {
 		var finalHTTPCode int
 
@@ -30,30 +42,139 @@ func createWelcomeHandler(serverMetrics *metrics) func(resp http.ResponseWriter,
 			return
 		}
 
-		resp.Header().Set(`Content-Type`, `application/json`)
+		wg := &sync.WaitGroup{}
 
-		rawBody, err := json.Marshal(map[string]string{
-			`app`: `qr-code-extractor`,
-			`v`:   `1.0`,
-		})
-		if err != nil {
-			log.Printf(`HTTP error occurred for remote addr %s\n`, req.RemoteAddr)
+		switch {
+		case req.URL.Query().Has("cpu-bound"):
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 
-			resp.WriteHeader(http.StatusInternalServerError)
-			finalHTTPCode = http.StatusInternalServerError
+				v, err := strconv.ParseInt(req.URL.Query().Get("cpu-bound"), 10, 64)
+				if err == nil {
+					onCpuBound(v)
+				}
+			}()
+		case req.URL.Query().Has("cache-w"):
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				onCacheWrite(memcacheClient)
+			}()
+		case req.URL.Query().Has("cache-r"):
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				onCacheRead(memcacheClient)
+			}()
+		case req.URL.Query().Has("db-r"):
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				onDPCpuBound(pgConn)
+			}()
+		}
 
-			_, _ = resp.Write([]byte(`{"error": "internal server error"}`))
-		} else {
-			resp.WriteHeader(http.StatusOK)
-			finalHTTPCode = http.StatusOK
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-			_, err := resp.Write(rawBody)
+			resp.Header().Set(`Content-Type`, `application/json`)
+
+			rawBody, err := json.Marshal(map[string]string{
+				`app`: `qr-code-extractor`,
+				`v`:   `1.0`,
+			})
 			if err != nil {
+				log.Printf(`HTTP error occurred for remote addr %s\n`, req.RemoteAddr)
+
 				resp.WriteHeader(http.StatusInternalServerError)
 				finalHTTPCode = http.StatusInternalServerError
 
 				_, _ = resp.Write([]byte(`{"error": "internal server error"}`))
+			} else {
+				resp.WriteHeader(http.StatusOK)
+				finalHTTPCode = http.StatusOK
+
+				_, err := resp.Write(rawBody)
+				if err != nil {
+					resp.WriteHeader(http.StatusInternalServerError)
+					finalHTTPCode = http.StatusInternalServerError
+
+					_, _ = resp.Write([]byte(`{"error": "internal server error"}`))
+				}
 			}
-		}
+		}()
+
+		wg.Wait()
+	}
+}
+
+func onCpuBound(count int64) {
+	v := rand.ExpFloat64()
+	for i := int64(0); i < count; i++ {
+		md5.Sum([]byte(fmt.Sprintf("%f", v)))
+	}
+
+	log.Printf("cpu bound req")
+}
+
+func onCacheWrite(memcachedClient *memcache.Client) {
+	k, v := rand.ExpFloat64(), rand.ExpFloat64()
+	rawV := fmt.Sprintf("%f", v)
+
+	err := memcachedClient.Set(&memcache.Item{
+		Key:   fmt.Sprintf("random-key-%f", k),
+		Value: []byte(rawV),
+	})
+	if err != nil {
+		log.Printf("cannot write cache: %w", err)
+	} else {
+		log.Printf("write cache successfully")
+	}
+}
+
+func onCacheRead(memcachedClient *memcache.Client) {
+	v := rand.ExpFloat64()
+	item, err := memcachedClient.Get(fmt.Sprintf("random-key-%f", v))
+	if err != nil {
+		log.Printf("cannot read from cache: %w", err)
+	} else {
+		log.Printf("read from cache: %v", item)
+	}
+}
+
+func onDPCpuBound(pgConn *pgx.Conn) {
+	r, err := pgConn.Query(context.Background(),
+		"SELECT md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea), "+
+			"md5(random()::text), sha512(random()::text::bytea)")
+	if err != nil {
+		log.Printf("read from db err: %w", err)
+	}
+
+	defer r.Close()
+
+	if r.Err() != nil {
+		log.Printf("db internal err: %w", r.Err())
+	} else {
+		log.Printf("got query result")
 	}
 }
