@@ -1,6 +1,7 @@
-include .env
+include .env.local
 
-DOCKER=docker --context=lima-docker
+DOCKER=docker
+GOPROXY=https://proxy.golang.org,direct
 
 .PHONY: build-app run-lima run-service run-application run-pgsql fix-permissions-pgsql stop-pgsql
 
@@ -14,13 +15,13 @@ run-lima:
 	limactl start docker
 
 build-app:
-	docker --context=lima-docker build --tag=devhands:app .
+	docker build --tag=devhands:app .
 
 run-service:
-	docker --context=lima-docker run --publish 8080:8080 devhands:app
+	docker run --publish 8080:8080 devhands:app
 
 run-application:
-	docker-compose --context=lima-docker up
+	docker-compose up
 
 run-memcached:
 	$(DOCKER) run -it --rm --name devhands_memcached -p 11211:11211 memcached:latest
@@ -28,7 +29,7 @@ run-memcached:
 # https://github.com/docker-library/docs/blob/master/postgres/README.md
 # How to configure permissions for PG data directory
 run-pgsql:
-	docker --context=lima-docker run -it --rm \
+	docker run -it --rm \
 	--name devhands_pgsql \
 	--user 1000:1000 \
 	-e POSTGRES_PASSWORD=$(DB_PASSWORD) \
@@ -38,10 +39,29 @@ run-pgsql:
 	postgres:latest
 
 fix-permissions-pgsql:
-	docker --context=lima-docker run -it --rm --user 1000:1000 -v pgdata:/var/lib/postgresql/data postgres
+	docker run -it --rm --user 1000:1000 -v pgdata:/var/lib/postgresql/data postgres
 
 stop-pgsql:
-	 docker --context=lima-docker stop devhands_pgsql
+	 docker stop devhands_pgsql
 
 docker-ps:
 	$(DOCKER) ps
+
+start-local-env: rebuild-app
+	docker-compose --env-file=.env.local up -d --wait
+	docker-compose --env-file=.env.local logs -f app
+
+rm-local-env:
+	docker-compose --env-file=.env.local down -v
+
+rebuild-app:
+	docker-compose --env-file=.env.local build app
+
+rebuild: rm-local-env rebuild-app start-local-env
+	@$(info rebuild app)
+
+install-tools:
+	GOBIN="$$(pwd)/.bin" go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1
+
+lint: install-tools
+	./.bin/golangci-lint run

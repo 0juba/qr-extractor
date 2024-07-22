@@ -30,7 +30,7 @@ func Test_welcomeHandler(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			welcomeHandler := createWelcomeHandler(nil)
+			welcomeHandler := createWelcomeHandler(nil, nil, nil)
 			welcomeHandler(tt.args.w, tt.args.r)
 		})
 	}

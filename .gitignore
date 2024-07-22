@@ -28,3 +28,6 @@ go.work
 *.ipr
 *.iws
 .idea/
+
+.env.local
+.bin/

@@ -23,13 +23,13 @@ func main() {
 
 	serverWorkers := &sync.WaitGroup{}
 
-	_ = mustInitDBConnection(ctx, cfg, serverWorkers)
-	_ = initMemcachedConn(ctx, cfg, serverWorkers)
+	pgConn := mustInitDBConnection(ctx, cfg, serverWorkers)
+	memcahcedClint := initMemcachedConn(ctx, cfg, serverWorkers)
 	upPrometheusExporter(ctx, serverWorkers)
 
 	serverMetrics := registerPrometheusMetrics()
 
-	http.HandleFunc("/", createWelcomeHandler(serverMetrics))
+	http.HandleFunc("/", createWelcomeHandler(serverMetrics, memcahcedClint, pgConn))
 	log.Printf("Starting qr-code-extractor server on addr: %s", httpSrv.Addr)
 
 	go func() {
